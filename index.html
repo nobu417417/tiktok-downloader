@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TikTok Video Downloader</title>
+  <title>TikTok Downloader</title>
   <style>
     body { font-family: sans-serif; max-width: 500px; margin: 50px auto; padding: 20px; text-align: center; }
-    input { width: 85%; padding: 10px; margin-bottom: 12px; font-size: 15px; }
+    input { width: 90%; padding: 10px; margin-bottom: 10px; font-size: 16px; box-sizing: border-box; }
     button { padding: 10px 20px; font-size: 16px; cursor: pointer; }
     #status { margin-top: 20px; font-weight: bold; word-break: break-all; }
-    #downloadLink { display: none; margin-top: 15px; display: inline-block; padding: 10px 15px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; }
+    .version-info { font-size: 12px; color: #888; margin-top: 40px; border-top: 1px solid #eee; padding-top: 10px; }
   </style>
 </head>
 <body>
@@ -17,55 +17,65 @@
   <h2>TikTok 動画ダウンロード</h2>
   <input type="text" id="videoUrl" placeholder="TikTokのURLを貼り付け" />
   <br />
-  <button onclick="downloadVideo()">解析開始</button>
+  <button onclick="downloadVideo()">ダウンロード</button>
 
   <div id="status"></div>
-  <a id="downloadLink" href="#" target="_blank" style="display:none;">動画をダウンロードする</a>
+
+  <!-- コード更新日時を表示（バージョン確認用） -->
+  <div class="version-info">
+    最終更新日時: 2026-09-02 09:50
+  </div>
 
   <script>
     async function downloadVideo() {
       const rawUrl = document.getElementById('videoUrl').value.trim();
       const statusDiv = document.getElementById('status');
-      const downloadLink = document.getElementById('downloadLink');
-
-      downloadLink.style.display = 'none';
 
       if (!rawUrl) {
         statusDiv.innerText = 'URLを入力してください';
         return;
       }
 
-      // URLから「?」以降の余計なパラメータを除去
-      const cleanUrl = rawUrl.split('?')[0];
-
       statusDiv.innerText = '解析中...';
 
+      // 余計なクエリパラメータ（?is_from_webapp...等）を除外して整形
+      let cleanUrl = rawUrl;
       try {
-        const response = await fetch('https://api.cobalt.tools/', {
+        const urlObj = new URL(rawUrl);
+        cleanUrl = urlObj.origin + urlObj.pathname;
+      } catch (e) {
+        // URLの解析に失敗した場合はそのまま使用
+      }
+
+      try {
+        const response = await fetch('https://api.cobalt.tools/api/json', {
           method: 'POST',
           headers: {
             'Accept': 'application/json',
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            url: cleanUrl
+            url: cleanUrl,
+            videoQuality: 'max'
           })
         });
 
         const data = await response.json();
 
-        if (data.url) {
-          statusDiv.innerText = '解析成功！下のボタンを押して保存してください。';
-          downloadLink.href = data.url;
-          downloadLink.style.display = 'inline-block';
-        } else if (data.status === 'error') {
-          statusDiv.innerText = 'エラー: ' + (data.text || '動画を取得できませんでした');
+        if (data.status === 'stream' || data.status === 'redirect' || data.status === 'tunnel') {
+          statusDiv.innerText = 'ダウンロードを開始します...';
+          window.location.href = data.url;
+        } else if (data.status === 'picker') {
+          // 複数の動画/画像が含まれる場合（スライドショーなど）は一番目の要素を開く
+          window.location.href = data.picker[0].url;
         } else {
-          statusDiv.innerText = 'レスポンスエラーが発生しました';
+          // エラー詳細が返ってきた場合はそれを表示
+          const errorDetail = data.text || data.code || '解析エラー';
+          statusDiv.innerText = 'エラーが発生しました: ' + errorDetail;
         }
       } catch (error) {
         console.error(error);
-        statusDiv.innerText = '通信エラーが発生しました（API側のアクセス制限等の可能性があります）';
+        statusDiv.innerText = '通信エラーが発生しました';
       }
     }
   </script>
