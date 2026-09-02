@@ -5,33 +5,101 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>TikTok Downloader</title>
   <style>
-    body { font-family: sans-serif; max-width: 500px; margin: 50px auto; padding: 20px; text-align: center; }
-    input { width: 90%; padding: 10px; margin-bottom: 10px; font-size: 16px; box-sizing: border-box; }
-    button { padding: 10px 20px; font-size: 16px; cursor: pointer; margin: 5px; }
-    #status { margin-top: 20px; font-weight: bold; word-break: break-all; }
-    #copyBtn { display: none; background-color: #f0f0f0; border: 1px solid #ccc; padding: 5px 12px; font-size: 14px; border-radius: 4px; }
-    .version-box { margin-top: 40px; padding-top: 10px; border-top: 1px solid #ddd; font-size: 13px; color: #555; font-weight: bold; }
+    body { font-family: sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; text-align: center; background-color: #f9f9f9; }
+    h2 { color: #333; }
+    
+    /* 入力エリアのレイアウト調整 */
+    .input-group {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      align-items: center;
+      margin-bottom: 15px;
+      flex-wrap: wrap; /* 画面が狭い時に折り返す */
+    }
+
+    input {
+      flex-grow: 1; /* 入力欄を可能な限り広く */
+      max-width: 400px;
+      padding: 12px;
+      font-size: 16px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      box-sizing: border-box;
+    }
+
+    button {
+      padding: 12px 20px;
+      font-size: 16px;
+      cursor: pointer;
+      border: none;
+      border-radius: 8px;
+      transition: background-color 0.2s;
+    }
+
+    /* 貼り付けボタンのスタイル */
+    .paste-btn {
+      background-color: #6c757d;
+      color: white;
+    }
+    .paste-btn:hover { background-color: #5a6268; }
+
+    /* ダウンロードボタンのスタイル */
+    .dl-btn {
+      background-color: #007bff;
+      color: white;
+      font-weight: bold;
+    }
+    .dl-btn:hover { background-color: #0069d9; }
+    .dl-btn:disabled { background-color: #a0cfff; cursor: not-allowed; }
+
+    #status { margin-top: 20px; font-weight: bold; word-break: break-all; min-height: 1.2em; }
+    #copyBtn { display: none; background-color: #f0f0f0; border: 1px solid #ccc; padding: 5px 12px; font-size: 14px; border-radius: 4px; color: #333;}
+    
+    .version-box { margin-top: 50px; padding-top: 15px; border-top: 1px solid #eee; font-size: 13px; color: #888; }
   </style>
 </head>
 <body>
 
   <h2>TikTok 動画ダウンロード</h2>
-  <input type="text" id="videoUrl" placeholder="TikTokのURLを貼り付け" />
-  <br />
-  <button onclick="downloadVideo()">ダウンロード実行</button>
+  
+  <div class="input-group">
+    <input type="text" id="videoUrl" placeholder="TikTokのURLを貼り付け" />
+    <!-- 貼り付けボタンを追加 -->
+    <button class="paste-btn" onclick="pasteUrl()" title="クリップボードから貼り付け">貼り付け</button>
+    <button class="dl-btn" id="mainDlBtn" onclick="downloadVideo()">ダウンロード実行</button>
+  </div>
 
   <div id="status"></div>
   <br />
   <button id="copyBtn" onclick="copyError()">エラーメッセージをコピー</button>
 
   <div class="version-box">
-    更新日時: 2026-09-02 10:20
+    更新日時: 2026-09-02 10:30
   </div>
 
   <script>
     let lastErrorMessage = '';
 
-    // URLからユーザーIDと動画IDを抽出するユーティリティ関数
+    // クリップボードからURLを貼り付ける関数
+    async function pasteUrl() {
+      const inputEl = document.getElementById('videoUrl');
+      const statusDiv = document.getElementById('status');
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text) {
+          inputEl.value = text.trim();
+          statusDiv.innerText = 'URLを貼り付けました。';
+          setTimeout(() => { if(statusDiv.innerText === 'URLを貼り付けました。') statusDiv.innerText = ''; }, 2000);
+        } else {
+          statusDiv.innerText = 'クリップボードが空、またはテキストではありません。';
+        }
+      } catch (err) {
+        console.error('Failed to read clipboard: ', err);
+        statusDiv.innerText = '貼り付けに失敗しました。ブラウザのペースト許可を確認してください。';
+      }
+    }
+
     function parseUrlInfo(urlStr) {
       let author = '';
       let videoId = '';
@@ -39,23 +107,19 @@
         const u = new URL(urlStr);
         const matchUser = u.pathname.match(/@([^/]+)/);
         if (matchUser) author = matchUser[1];
-
         const matchVideo = u.pathname.match(/video\/(\d+)/);
         if (matchVideo) videoId = matchVideo[1];
       } catch (e) {}
       return { author, videoId };
     }
 
-    // 動画URLからBlobデータを取得して指定のファイル名で直接ダウンロード
     async function triggerDirectDownload(fileUrl, fileName) {
       const statusDiv = document.getElementById('status');
       statusDiv.innerText = '動画ファイルをダウンロード中...';
-
       try {
         const res = await fetch(fileUrl);
         if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
         const blob = await res.blob();
-        
         const blobUrl = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = blobUrl;
@@ -64,10 +128,9 @@
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(blobUrl);
-
         statusDiv.innerText = 'ダウンロードが完了しました！';
       } catch (e) {
-        statusDiv.innerText = '直接保存に失敗したため、別タブで動画を開きます...';
+        statusDiv.innerText = '直接保存に失敗したため、別タブで動画を開きます。右クリックで保存してください。';
         window.open(fileUrl, '_blank');
       }
     }
@@ -76,19 +139,20 @@
       const rawUrl = document.getElementById('videoUrl').value.trim();
       const statusDiv = document.getElementById('status');
       const copyBtn = document.getElementById('copyBtn');
+      const dlBtn = document.getElementById('mainDlBtn');
 
       statusDiv.innerText = '';
       copyBtn.style.display = 'none';
       lastErrorMessage = '';
 
       if (!rawUrl) {
-        statusDiv.innerText = 'URLを入力してください';
+        statusDiv.innerText = 'URLを入力してください。';
         return;
       }
 
       statusDiv.innerText = '解析中...';
+      dlBtn.disabled = true; // 連打防止
 
-      // URLから予備の情報を取得しておく
       const parsed = parseUrlInfo(rawUrl);
 
       // 1. TikWM API
@@ -96,25 +160,16 @@
         const formData = new FormData();
         formData.append('url', rawUrl);
         formData.append('hd', 1);
-
-        const res = await fetch('https://www.tikwm.com/api/', {
-          method: 'POST',
-          body: formData
-        });
-
+        const res = await fetch('https://www.tikwm.com/api/', { method: 'POST', body: formData });
         const data = await res.json();
 
         if (data.code === 0 && data.data && (data.data.play || data.data.hdplay)) {
           const videoLink = data.data.hdplay || data.data.play;
-          
-          // APIからユーザーIDと動画IDを取得（取得できない場合はURLからの解析結果を使用）
           const author = (data.data.author && data.data.author.unique_id) || parsed.author || 'user';
           const videoId = data.data.id || parsed.videoId || Date.now();
-
-          // 指定の書式: ユーザーID(動画ID) - TikTok.mp4
           const fileName = `${author}(${videoId}) - TikTok.mp4`;
-
           await triggerDirectDownload(videoLink, fileName);
+          dlBtn.disabled = false;
           return;
         } else {
           lastErrorMessage = `[TikWM Error] code: ${data.code}, msg: ${data.msg || 'failed'}`;
@@ -123,62 +178,43 @@
         lastErrorMessage = `[TikWM Fetch Error] ${err.message}`;
       }
 
-      // 2. Cobalt API (予備サーバー)
+      // 2. Cobalt API
       statusDiv.innerText = '予備サーバーで解析中...';
       try {
         let cleanUrl = rawUrl;
-        try {
-          const urlObj = new URL(rawUrl);
-          cleanUrl = urlObj.origin + urlObj.pathname;
-        } catch (e) {}
-
+        try { const uObj = new URL(rawUrl); cleanUrl = uObj.origin + uObj.pathname; } catch (e) {}
         const response = await fetch('https://api.cobalt.tools/api/json', {
           method: 'POST',
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            url: cleanUrl,
-            videoQuality: 'max'
-          })
+          headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: cleanUrl, videoQuality: 'max' })
         });
-
         const data2 = await response.json();
-
         let targetUrl = '';
-        if (data2.status === 'stream' || data2.status === 'redirect' || data2.status === 'tunnel') {
-          targetUrl = data2.url;
-        } else if (data2.status === 'picker' && data2.picker && data2.picker.length > 0) {
-          targetUrl = data2.picker[0].url;
-        }
+        if (data2.status === 'stream' || data2.status === 'redirect' || data2.status === 'tunnel') { targetUrl = data2.url; }
+        else if (data2.status === 'picker' && data2.picker?.length > 0) { targetUrl = data2.picker[0].url; }
 
         if (targetUrl) {
           const author = parsed.author || 'user';
           const videoId = parsed.videoId || Date.now();
           const fileName = `${author}(${videoId}) - TikTok.mp4`;
-
           await triggerDirectDownload(targetUrl, fileName);
+          dlBtn.disabled = false;
           return;
         } else {
-          lastErrorMessage += ` | [Cobalt Status: ${data2.status || 'unknown'}] ${data2.text || data2.code || JSON.stringify(data2)}`;
+          lastErrorMessage += ` | [Cobalt Status: ${data2.status}] ${data2.text || data2.code || ''}`;
         }
       } catch (err2) {
         lastErrorMessage += ` | [Cobalt Fetch Error] ${err2.message}`;
       }
 
-      // 全て失敗した場合
-      statusDiv.innerText = 'エラー: 動画を取得できませんでした';
+      statusDiv.innerText = 'エラー: 動画を取得できませんでした。';
       copyBtn.style.display = 'inline-block';
+      dlBtn.disabled = false;
     }
 
     function copyError() {
       if (!lastErrorMessage) return;
-      navigator.clipboard.writeText(lastErrorMessage).then(() => {
-        alert('エラー詳細をクリップボードにコピーしました');
-      }).catch(() => {
-        alert('コピーに失敗しました:\n' + lastErrorMessage);
-      });
+      navigator.clipboard.writeText(lastErrorMessage).then(() => alert('コピーしました。')).catch(() => alert('失敗:\n' + lastErrorMessage));
     }
   </script>
 </body>
