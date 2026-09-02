@@ -5,7 +5,7 @@
   <!-- 検索エンジンにインデックスされないように設定 -->
   <meta name="robots" content="noindex, nofollow">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TikTok Downloader</title>
+  <title>tool-page</title>
   <style>
     body { font-family: sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; text-align: center; background-color: #f9f9f9; }
     h2 { color: #333; }
@@ -52,6 +52,18 @@
     .dl-btn:hover { background-color: #0069d9; }
     .dl-btn:disabled { background-color: #a0cfff; cursor: not-allowed; }
 
+    /* ユーザートップページリンクの表示枠 */
+    #userLinkArea {
+      margin-top: 10px;
+      font-size: 15px;
+      word-break: break-all;
+    }
+    #userLinkArea a {
+      color: #007bff;
+      text-decoration: underline;
+      font-weight: bold;
+    }
+
     #status { margin-top: 20px; font-weight: bold; word-break: break-all; min-height: 1.2em; }
     #copyBtn { display: none; background-color: #f0f0f0; border: 1px solid #ccc; padding: 5px 12px; font-size: 14px; border-radius: 4px; color: #333;}
     
@@ -60,7 +72,7 @@
 </head>
 <body>
 
-  <h2>TikTok 動画ダウンロード</h2>
+  <h2>tool-page</h2>
   
   <div class="input-group">
     <input type="text" id="videoUrl" placeholder="TikTokのURLを貼り付け" />
@@ -68,12 +80,15 @@
     <button class="dl-btn" id="mainDlBtn" onclick="downloadVideo()">ダウンロード実行</button>
   </div>
 
+  <!-- ユーザーのトップページリンク表示場所 -->
+  <div id="userLinkArea"></div>
+
   <div id="status"></div>
   <br />
   <button id="copyBtn" onclick="copyError()">エラーメッセージをコピー</button>
 
   <div class="version-box">
-    更新日時: 2026-09-02 10:35
+    更新日時: 2026-09-02 10:45
   </div>
 
   <script>
@@ -110,6 +125,17 @@
       return { author, videoId };
     }
 
+    // ユーザーのトップページリンクを生成して表示する関数
+    function showUserLink(author) {
+      const userLinkArea = document.getElementById('userLinkArea');
+      if (author && author !== 'user') {
+        const profileUrl = `https://www.tiktok.com/@${author}`;
+        userLinkArea.innerHTML = `ユーザーページ: <a href="${profileUrl}" target="_blank" rel="noopener noreferrer">${profileUrl}</a>`;
+      } else {
+        userLinkArea.innerHTML = '';
+      }
+    }
+
     async function triggerDirectDownload(fileUrl, fileName) {
       const statusDiv = document.getElementById('status');
       statusDiv.innerText = '動画ファイルをダウンロード中...';
@@ -137,8 +163,10 @@
       const statusDiv = document.getElementById('status');
       const copyBtn = document.getElementById('copyBtn');
       const dlBtn = document.getElementById('mainDlBtn');
+      const userLinkArea = document.getElementById('userLinkArea');
 
       statusDiv.innerText = '';
+      userLinkArea.innerHTML = '';
       copyBtn.style.display = 'none';
       lastErrorMessage = '';
 
@@ -165,6 +193,8 @@
           const author = (data.data.author && data.data.author.unique_id) || parsed.author || 'user';
           const videoId = data.data.id || parsed.videoId || Date.now();
           const fileName = `${author}(${videoId}) - TikTok.mp4`;
+          
+          showUserLink(author); // ユーザーページリンクを表示
           await triggerDirectDownload(videoLink, fileName);
           dlBtn.disabled = false;
           return;
@@ -194,6 +224,8 @@
           const author = parsed.author || 'user';
           const videoId = parsed.videoId || Date.now();
           const fileName = `${author}(${videoId}) - TikTok.mp4`;
+          
+          showUserLink(author); // ユーザーページリンクを表示
           await triggerDirectDownload(targetUrl, fileName);
           dlBtn.disabled = false;
           return;
