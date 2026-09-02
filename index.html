@@ -6,9 +6,10 @@
   <title>TikTok Video Downloader</title>
   <style>
     body { font-family: sans-serif; max-width: 500px; margin: 50px auto; padding: 20px; text-align: center; }
-    input { width: 80%; padding: 10px; margin-bottom: 10px; font-size: 16px; }
+    input { width: 85%; padding: 10px; margin-bottom: 12px; font-size: 15px; }
     button { padding: 10px 20px; font-size: 16px; cursor: pointer; }
-    #status { margin-top: 20px; font-weight: bold; }
+    #status { margin-top: 20px; font-weight: bold; word-break: break-all; }
+    #downloadLink { display: none; margin-top: 15px; display: inline-block; padding: 10px 15px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; }
   </style>
 </head>
 <body>
@@ -16,47 +17,55 @@
   <h2>TikTok 動画ダウンロード</h2>
   <input type="text" id="videoUrl" placeholder="TikTokのURLを貼り付け" />
   <br />
-  <button onclick="downloadVideo()">ダウンロード</button>
+  <button onclick="downloadVideo()">解析開始</button>
 
   <div id="status"></div>
+  <a id="downloadLink" href="#" target="_blank" style="display:none;">動画をダウンロードする</a>
 
   <script>
     async function downloadVideo() {
-      const urlInput = document.getElementById('videoUrl').value.trim();
+      const rawUrl = document.getElementById('videoUrl').value.trim();
       const statusDiv = document.getElementById('status');
+      const downloadLink = document.getElementById('downloadLink');
 
-      if (!urlInput) {
+      downloadLink.style.display = 'none';
+
+      if (!rawUrl) {
         statusDiv.innerText = 'URLを入力してください';
         return;
       }
 
+      // URLから「?」以降の余計なパラメータを除去
+      const cleanUrl = rawUrl.split('?')[0];
+
       statusDiv.innerText = '解析中...';
 
       try {
-        // Cobalt API を呼び出し
-        const response = await fetch('https://api.cobalt.tools/api/json', {
+        const response = await fetch('https://api.cobalt.tools/', {
           method: 'POST',
           headers: {
             'Accept': 'application/json',
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            url: urlInput
+            url: cleanUrl
           })
         });
 
         const data = await response.json();
 
-        if (data.status === 'stream' || data.status === 'redirect') {
-          statusDiv.innerText = 'ダウンロードを開始します...';
-          // 動画ファイルを開く（直リンクでダウンロード開始）
-          window.location.href = data.url;
+        if (data.url) {
+          statusDiv.innerText = '解析成功！下のボタンを押して保存してください。';
+          downloadLink.href = data.url;
+          downloadLink.style.display = 'inline-block';
+        } else if (data.status === 'error') {
+          statusDiv.innerText = 'エラー: ' + (data.text || '動画を取得できませんでした');
         } else {
-          statusDiv.innerText = '動画を取得できませんでした: ' + (data.text || 'エラー');
+          statusDiv.innerText = 'レスポンスエラーが発生しました';
         }
       } catch (error) {
         console.error(error);
-        statusDiv.innerText = '通信エラーが発生しました';
+        statusDiv.innerText = '通信エラーが発生しました（API側のアクセス制限等の可能性があります）';
       }
     }
   </script>
