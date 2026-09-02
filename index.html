@@ -9,8 +9,6 @@
     input { width: 90%; padding: 10px; margin-bottom: 10px; font-size: 16px; box-sizing: border-box; }
     button { padding: 10px 20px; font-size: 16px; cursor: pointer; margin: 5px; }
     #status { margin-top: 20px; font-weight: bold; word-break: break-all; }
-    #resultArea { margin-top: 15px; }
-    .dl-btn { display: inline-block; padding: 12px 24px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; margin-top: 10px; }
     #copyBtn { display: none; background-color: #f0f0f0; border: 1px solid #ccc; padding: 5px 12px; font-size: 14px; border-radius: 4px; }
     .version-box { margin-top: 40px; padding-top: 10px; border-top: 1px solid #ddd; font-size: 13px; color: #555; font-weight: bold; }
   </style>
@@ -20,27 +18,52 @@
   <h2>TikTok 動画ダウンロード</h2>
   <input type="text" id="videoUrl" placeholder="TikTokのURLを貼り付け" />
   <br />
-  <button onclick="downloadVideo()">解析開始</button>
+  <button onclick="downloadVideo()">ダウンロード実行</button>
 
   <div id="status"></div>
-  <div id="resultArea"></div>
+  <br />
   <button id="copyBtn" onclick="copyError()">エラーメッセージをコピー</button>
 
   <div class="version-box">
-    更新日時: 2026-09-02 10:05
+    更新日時: 2026-09-02 10:15
   </div>
 
   <script>
     let lastErrorMessage = '';
 
+    // 動画URLからBlobデータを取得して直接ダウンロード発火
+    async function triggerDirectDownload(fileUrl) {
+      const statusDiv = document.getElementById('status');
+      statusDiv.innerText = '動画ファイルをダウンロード中...';
+
+      try {
+        const res = await fetch(fileUrl);
+        if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
+        const blob = await res.blob();
+        
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = `tiktok_${Date.now()}.mp4`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(blobUrl);
+
+        statusDiv.innerText = 'ダウンロードが完了しました！';
+      } catch (e) {
+        // Blob取得がCORS等で失敗した場合は、フォールバックで別タブ直開き
+        statusDiv.innerText = '直接保存に失敗したため、別タブで動画を開きます...';
+        window.open(fileUrl, '_blank');
+      }
+    }
+
     async function downloadVideo() {
       const rawUrl = document.getElementById('videoUrl').value.trim();
       const statusDiv = document.getElementById('status');
-      const resultArea = document.getElementById('resultArea');
       const copyBtn = document.getElementById('copyBtn');
 
       statusDiv.innerText = '';
-      resultArea.innerHTML = '';
       copyBtn.style.display = 'none';
       lastErrorMessage = '';
 
@@ -51,7 +74,7 @@
 
       statusDiv.innerText = '解析中...';
 
-      // 1. TikWM API で試行（TikTok用に最適化）
+      // 1. TikWM API
       try {
         const formData = new FormData();
         formData.append('url', rawUrl);
@@ -66,8 +89,7 @@
 
         if (data.code === 0 && data.data && (data.data.play || data.data.hdplay)) {
           const videoLink = data.data.hdplay || data.data.play;
-          statusDiv.innerText = '解析成功！下のボタンを押してダウンロードしてください。';
-          resultArea.innerHTML = `<a href="${videoLink}" target="_blank" rel="noopener noreferrer" class="dl-btn" download="tiktok.mp4">動画をダウンロード / 開く</a>`;
+          await triggerDirectDownload(videoLink);
           return;
         } else {
           lastErrorMessage = `[TikWM Error] code: ${data.code}, msg: ${data.msg || 'failed'}`;
@@ -76,7 +98,7 @@
         lastErrorMessage = `[TikWM Fetch Error] ${err.message}`;
       }
 
-      // 2. Cobalt API で予備試行
+      // 2. Cobalt API
       statusDiv.innerText = '予備サーバーで解析中...';
       try {
         let cleanUrl = rawUrl;
@@ -99,13 +121,15 @@
 
         const data2 = await response.json();
 
+        let targetUrl = '';
         if (data2.status === 'stream' || data2.status === 'redirect' || data2.status === 'tunnel') {
-          statusDiv.innerText = '解析成功！下のボタンを押してダウンロードしてください。';
-          resultArea.innerHTML = `<a href="${data2.url}" target="_blank" rel="noopener noreferrer" class="dl-btn">動画を開く / 保存</a>`;
-          return;
+          targetUrl = data2.url;
         } else if (data2.status === 'picker' && data2.picker && data2.picker.length > 0) {
-          statusDiv.innerText = '解析成功！下のボタンを押してダウンロードしてください。';
-          resultArea.innerHTML = `<a href="${data2.picker[0].url}" target="_blank" rel="noopener noreferrer" class="dl-btn">動画を開く / 保存</a>`;
+          targetUrl = data2.picker[0].url;
+        }
+
+        if (targetUrl) {
+          await triggerDirectDownload(targetUrl);
           return;
         } else {
           lastErrorMessage += ` | [Cobalt Status: ${data2.status || 'unknown'}] ${data2.text || data2.code || JSON.stringify(data2)}`;
