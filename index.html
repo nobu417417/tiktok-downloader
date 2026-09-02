@@ -25,14 +25,29 @@
   <button id="copyBtn" onclick="copyError()">エラーメッセージをコピー</button>
 
   <div class="version-box">
-    更新日時: 2026-09-02 10:15
+    更新日時: 2026-09-02 10:20
   </div>
 
   <script>
     let lastErrorMessage = '';
 
-    // 動画URLからBlobデータを取得して直接ダウンロード発火
-    async function triggerDirectDownload(fileUrl) {
+    // URLからユーザーIDと動画IDを抽出するユーティリティ関数
+    function parseUrlInfo(urlStr) {
+      let author = '';
+      let videoId = '';
+      try {
+        const u = new URL(urlStr);
+        const matchUser = u.pathname.match(/@([^/]+)/);
+        if (matchUser) author = matchUser[1];
+
+        const matchVideo = u.pathname.match(/video\/(\d+)/);
+        if (matchVideo) videoId = matchVideo[1];
+      } catch (e) {}
+      return { author, videoId };
+    }
+
+    // 動画URLからBlobデータを取得して指定のファイル名で直接ダウンロード
+    async function triggerDirectDownload(fileUrl, fileName) {
       const statusDiv = document.getElementById('status');
       statusDiv.innerText = '動画ファイルをダウンロード中...';
 
@@ -44,7 +59,7 @@
         const blobUrl = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = blobUrl;
-        a.download = `tiktok_${Date.now()}.mp4`;
+        a.download = fileName;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -52,7 +67,6 @@
 
         statusDiv.innerText = 'ダウンロードが完了しました！';
       } catch (e) {
-        // Blob取得がCORS等で失敗した場合は、フォールバックで別タブ直開き
         statusDiv.innerText = '直接保存に失敗したため、別タブで動画を開きます...';
         window.open(fileUrl, '_blank');
       }
@@ -74,6 +88,9 @@
 
       statusDiv.innerText = '解析中...';
 
+      // URLから予備の情報を取得しておく
+      const parsed = parseUrlInfo(rawUrl);
+
       // 1. TikWM API
       try {
         const formData = new FormData();
@@ -89,7 +106,15 @@
 
         if (data.code === 0 && data.data && (data.data.play || data.data.hdplay)) {
           const videoLink = data.data.hdplay || data.data.play;
-          await triggerDirectDownload(videoLink);
+          
+          // APIからユーザーIDと動画IDを取得（取得できない場合はURLからの解析結果を使用）
+          const author = (data.data.author && data.data.author.unique_id) || parsed.author || 'user';
+          const videoId = data.data.id || parsed.videoId || Date.now();
+
+          // 指定の書式: ユーザーID(動画ID) - TikTok.mp4
+          const fileName = `${author}(${videoId}) - TikTok.mp4`;
+
+          await triggerDirectDownload(videoLink, fileName);
           return;
         } else {
           lastErrorMessage = `[TikWM Error] code: ${data.code}, msg: ${data.msg || 'failed'}`;
@@ -98,7 +123,7 @@
         lastErrorMessage = `[TikWM Fetch Error] ${err.message}`;
       }
 
-      // 2. Cobalt API
+      // 2. Cobalt API (予備サーバー)
       statusDiv.innerText = '予備サーバーで解析中...';
       try {
         let cleanUrl = rawUrl;
@@ -129,7 +154,11 @@
         }
 
         if (targetUrl) {
-          await triggerDirectDownload(targetUrl);
+          const author = parsed.author || 'user';
+          const videoId = parsed.videoId || Date.now();
+          const fileName = `${author}(${videoId}) - TikTok.mp4`;
+
+          await triggerDirectDownload(targetUrl, fileName);
           return;
         } else {
           lastErrorMessage += ` | [Cobalt Status: ${data2.status || 'unknown'}] ${data2.text || data2.code || JSON.stringify(data2)}`;
