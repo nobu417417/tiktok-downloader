@@ -2,24 +2,25 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
+  <!-- 検索エンジンにインデックスされないように設定 -->
+  <meta name="robots" content="noindex, nofollow">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>TikTok Downloader</title>
   <style>
     body { font-family: sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; text-align: center; background-color: #f9f9f9; }
     h2 { color: #333; }
     
-    /* 入力エリアのレイアウト調整 */
     .input-group {
       display: flex;
       gap: 10px;
       justify-content: center;
       align-items: center;
       margin-bottom: 15px;
-      flex-wrap: wrap; /* 画面が狭い時に折り返す */
+      flex-wrap: wrap;
     }
 
     input {
-      flex-grow: 1; /* 入力欄を可能な限り広く */
+      flex-grow: 1;
       max-width: 400px;
       padding: 12px;
       font-size: 16px;
@@ -37,14 +38,12 @@
       transition: background-color 0.2s;
     }
 
-    /* 貼り付けボタンのスタイル */
     .paste-btn {
       background-color: #6c757d;
       color: white;
     }
     .paste-btn:hover { background-color: #5a6268; }
 
-    /* ダウンロードボタンのスタイル */
     .dl-btn {
       background-color: #007bff;
       color: white;
@@ -65,9 +64,8 @@
   
   <div class="input-group">
     <input type="text" id="videoUrl" placeholder="TikTokのURLを貼り付け" />
-    <!-- 貼り付けボタンを追加 -->
     <button class="paste-btn" onclick="pasteUrl()" title="クリップボードから貼り付け">貼り付け</button>
-    <button class="dl-btn" id="mainDlBtn" onclick="downloadVideo()">ダウンロード</button>
+    <button class="dl-btn" id="mainDlBtn" onclick="downloadVideo()">ダウンロード実行</button>
   </div>
 
   <div id="status"></div>
@@ -75,13 +73,12 @@
   <button id="copyBtn" onclick="copyError()">エラーメッセージをコピー</button>
 
   <div class="version-box">
-    更新日時: 2026-09-02 10:30
+    更新日時: 2026-09-02 10:35
   </div>
 
   <script>
     let lastErrorMessage = '';
 
-    // クリップボードからURLを貼り付ける関数
     async function pasteUrl() {
       const inputEl = document.getElementById('videoUrl');
       const statusDiv = document.getElementById('status');
@@ -151,7 +148,7 @@
       }
 
       statusDiv.innerText = '解析中...';
-      dlBtn.disabled = true; // 連打防止
+      dlBtn.disabled = true;
 
       const parsed = parseUrlInfo(rawUrl);
 
