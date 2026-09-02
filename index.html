@@ -9,6 +9,8 @@
     input { width: 90%; padding: 10px; margin-bottom: 10px; font-size: 16px; box-sizing: border-box; }
     button { padding: 10px 20px; font-size: 16px; cursor: pointer; margin: 5px; }
     #status { margin-top: 20px; font-weight: bold; word-break: break-all; }
+    #resultArea { margin-top: 15px; }
+    .dl-btn { display: inline-block; padding: 12px 24px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; margin-top: 10px; }
     #copyBtn { display: none; background-color: #f0f0f0; border: 1px solid #ccc; padding: 5px 12px; font-size: 14px; border-radius: 4px; }
     .version-box { margin-top: 40px; padding-top: 10px; border-top: 1px solid #ddd; font-size: 13px; color: #555; font-weight: bold; }
   </style>
@@ -18,14 +20,14 @@
   <h2>TikTok 動画ダウンロード</h2>
   <input type="text" id="videoUrl" placeholder="TikTokのURLを貼り付け" />
   <br />
-  <button onclick="downloadVideo()">ダウンロード</button>
+  <button onclick="downloadVideo()">解析開始</button>
 
   <div id="status"></div>
+  <div id="resultArea"></div>
   <button id="copyBtn" onclick="copyError()">エラーメッセージをコピー</button>
 
-  <!-- バージョン確認用の更新日時 -->
   <div class="version-box">
-    更新日時: 2026-09-02 09:55
+    更新日時: 2026-09-02 10:05
   </div>
 
   <script>
@@ -34,8 +36,11 @@
     async function downloadVideo() {
       const rawUrl = document.getElementById('videoUrl').value.trim();
       const statusDiv = document.getElementById('status');
+      const resultArea = document.getElementById('resultArea');
       const copyBtn = document.getElementById('copyBtn');
 
+      statusDiv.innerText = '';
+      resultArea.innerHTML = '';
       copyBtn.style.display = 'none';
       lastErrorMessage = '';
 
@@ -46,7 +51,33 @@
 
       statusDiv.innerText = '解析中...';
 
-      // 1. Cobalt API で試行
+      // 1. TikWM API で試行（TikTok用に最適化）
+      try {
+        const formData = new FormData();
+        formData.append('url', rawUrl);
+        formData.append('hd', 1);
+
+        const res = await fetch('https://www.tikwm.com/api/', {
+          method: 'POST',
+          body: formData
+        });
+
+        const data = await res.json();
+
+        if (data.code === 0 && data.data && (data.data.play || data.data.hdplay)) {
+          const videoLink = data.data.hdplay || data.data.play;
+          statusDiv.innerText = '解析成功！下のボタンを押してダウンロードしてください。';
+          resultArea.innerHTML = `<a href="${videoLink}" target="_blank" rel="noopener noreferrer" class="dl-btn" download="tiktok.mp4">動画をダウンロード / 開く</a>`;
+          return;
+        } else {
+          lastErrorMessage = `[TikWM Error] code: ${data.code}, msg: ${data.msg || 'failed'}`;
+        }
+      } catch (err) {
+        lastErrorMessage = `[TikWM Fetch Error] ${err.message}`;
+      }
+
+      // 2. Cobalt API で予備試行
+      statusDiv.innerText = '予備サーバーで解析中...';
       try {
         let cleanUrl = rawUrl;
         try {
@@ -66,47 +97,21 @@
           })
         });
 
-        const data = await response.json();
+        const data2 = await response.json();
 
-        if (data.status === 'stream' || data.status === 'redirect' || data.status === 'tunnel') {
-          statusDiv.innerText = 'ダウンロードを開始します...';
-          window.location.href = data.url;
+        if (data2.status === 'stream' || data2.status === 'redirect' || data2.status === 'tunnel') {
+          statusDiv.innerText = '解析成功！下のボタンを押してダウンロードしてください。';
+          resultArea.innerHTML = `<a href="${data2.url}" target="_blank" rel="noopener noreferrer" class="dl-btn">動画を開く / 保存</a>`;
           return;
-        } else if (data.status === 'picker' && data.picker && data.picker.length > 0) {
-          window.location.href = data.picker[0].url;
-          return;
-        } else {
-          lastErrorMessage = `[Cobalt Status: ${data.status || 'unknown'}] ${data.text || data.code || JSON.stringify(data)}`;
-        }
-      } catch (err) {
-        lastErrorMessage = `[Cobalt Fetch Error] ${err.message}`;
-      }
-
-      // 2. 予備API (tikwm) で再試行
-      statusDiv.innerText = '予備サーバーで再試行中...';
-      try {
-        const formData = new FormData();
-        formData.append('url', rawUrl);
-        formData.append('count', 12);
-        formData.append('cursor', 0);
-        formData.append('web', 1);
-
-        const res2 = await fetch('https://www.tikwm.com/api/', {
-          method: 'POST',
-          body: formData
-        });
-
-        const data2 = await res2.json();
-
-        if (data2.code === 0 && data2.data && data2.data.play) {
-          statusDiv.innerText = 'ダウンロードを開始します...';
-          window.location.href = data2.data.play;
+        } else if (data2.status === 'picker' && data2.picker && data2.picker.length > 0) {
+          statusDiv.innerText = '解析成功！下のボタンを押してダウンロードしてください。';
+          resultArea.innerHTML = `<a href="${data2.picker[0].url}" target="_blank" rel="noopener noreferrer" class="dl-btn">動画を開く / 保存</a>`;
           return;
         } else {
-          lastErrorMessage += ` | [TikWM Error] code: ${data2.code}, msg: ${data2.msg || 'failed'}`;
+          lastErrorMessage += ` | [Cobalt Status: ${data2.status || 'unknown'}] ${data2.text || data2.code || JSON.stringify(data2)}`;
         }
       } catch (err2) {
-        lastErrorMessage += ` | [TikWM Fetch Error] ${err2.message}`;
+        lastErrorMessage += ` | [Cobalt Fetch Error] ${err2.message}`;
       }
 
       // 全て失敗した場合
