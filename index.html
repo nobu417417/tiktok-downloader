@@ -107,7 +107,7 @@
   </div>
 
   <div class="version-box">
-    更新日時: 2026-09-03 14:30
+    更新日時: 2026-09-03 14:35
   </div>
 
   <script>
@@ -131,7 +131,6 @@
       }
     }
 
-    // TikTok URLの解析
     function parseTikTokInfo(urlStr) {
       let author = '';
       let videoId = '';
@@ -145,7 +144,6 @@
       return { author, videoId };
     }
 
-    // Bilibili URLの解析 (BV号/AV号)
     function parseBilibiliInfo(urlStr) {
       let videoId = '';
       try {
@@ -160,7 +158,6 @@
       return { videoId };
     }
 
-    // ユーザーリンクの表示
     function showUserLink(platform, authorOrSpaceId) {
       const userLinkArea = document.getElementById('userLinkArea');
       if (!authorOrSpaceId || authorOrSpaceId === 'user') {
@@ -199,7 +196,6 @@
       }
     }
 
-    // TikTok用処理
     async function handleTikTok(rawUrl) {
       const statusDiv = document.getElementById('status');
       const parsed = parseTikTokInfo(rawUrl);
@@ -228,64 +224,85 @@
         lastErrorMessage = `[TikWM Fetch Error] ${err.message}`;
       }
 
-      // 2. Cobalt API Fallback
       statusDiv.innerText = '予備サーバーで解析中...';
       return await handleCobalt(rawUrl, 'tiktok', parsed.author, parsed.videoId);
     }
 
-    // Bilibili用処理
     async function handleBilibili(rawUrl) {
       const parsed = parseBilibiliInfo(rawUrl);
       return await handleCobalt(rawUrl, 'bilibili', 'bilibili_user', parsed.videoId);
     }
 
-    // Cobalt API 汎用処理（複数エンドポイントのフォールバック付き）
     async function handleCobalt(rawUrl, platform, defaultAuthor, defaultVideoId) {
       const statusDiv = document.getElementById('status');
       let cleanUrl = rawUrl;
       try { const uObj = new URL(rawUrl); cleanUrl = uObj.origin + uObj.pathname; } catch (e) {}
 
-      // 利用可能なCobalt APIエンドポイントのリスト
       const endpoints = [
         'https://api.cobalt.tools/api/json',
-        'https://co.wuk.sh/api/json'
+        'https://co.wuk.sh/api/json',
+        'https://cobalt.api.scouts.cc/api/json'
       ];
 
+      const payload = { url: cleanUrl, videoQuality: 'max' };
+
       for (const endpoint of endpoints) {
+        // 通常のリクエスト試行
         try {
           const response = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: cleanUrl, videoQuality: 'max' })
+            body: JSON.stringify(payload)
           });
 
-          if (!response.ok) {
-            lastErrorMessage += ` | [${endpoint} HTTP ${response.status}]`;
-            continue;
-          }
-
-          const data = await response.json();
-          let targetUrl = '';
-          if (data.status === 'stream' || data.status === 'redirect' || data.status === 'tunnel') { targetUrl = data.url; }
-          else if (data.status === 'picker' && data.picker?.length > 0) { targetUrl = data.picker[0].url; }
-
-          if (targetUrl) {
-            const author = defaultAuthor || 'user';
-            const videoId = defaultVideoId || Date.now();
-            const siteName = platform === 'bilibili' ? 'Bilibili' : 'TikTok';
-            const fileName = `${author}(${videoId}) - ${siteName}.mp4`;
-            
-            if (platform === 'tiktok') showUserLink('tiktok', author);
-            await triggerDirectDownload(targetUrl, fileName);
-            return true;
+          if (response.ok) {
+            const data = await response.json();
+            if (await processCobaltResult(data, platform, defaultAuthor, defaultVideoId)) return true;
           } else {
-            lastErrorMessage += ` | [Cobalt Status: ${data.status}] ${data.text || data.code || ''}`;
+            lastErrorMessage += ` | [${endpoint} HTTP ${response.status}]`;
           }
         } catch (err) {
-          lastErrorMessage += ` | [Fetch Error ${endpoint}]: ${err.message}`;
+          lastErrorMessage += ` | Direct fetch fail: ${endpoint}`;
+        }
+
+        // CORS回避プロキシ経由での再試行
+        try {
+          const proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(endpoint);
+          const response = await fetch(proxyUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            if (await processCobaltResult(data, platform, defaultAuthor, defaultVideoId)) return true;
+          }
+        } catch (proxyErr) {
+          lastErrorMessage += ` | Proxy fetch fail: ${endpoint}`;
         }
       }
       return false;
+    }
+
+    async function processCobaltResult(data, platform, defaultAuthor, defaultVideoId) {
+      let targetUrl = '';
+      if (data.status === 'stream' || data.status === 'redirect' || data.status === 'tunnel') { targetUrl = data.url; }
+      else if (data.status === 'picker' && data.picker?.length > 0) { targetUrl = data.picker[0].url; }
+
+      if (targetUrl) {
+        const author = defaultAuthor || 'user';
+        const videoId = defaultVideoId || Date.now();
+        const siteName = platform === 'bilibili' ? 'Bilibili' : 'TikTok';
+        const fileName = `${author}(${videoId}) - ${siteName}.mp4`;
+        
+        if (platform === 'tiktok') showUserLink('tiktok', author);
+        await triggerDirectDownload(targetUrl, fileName);
+        return true;
+      } else {
+        lastErrorMessage += ` | [Cobalt Status: ${data.status}] ${data.text || data.code || ''}`;
+        return false;
+      }
     }
 
     async function downloadVideo() {
@@ -312,11 +329,9 @@
 
       let success = false;
 
-      // URLのドメインによる自動分岐
       if (rawUrl.includes('bilibili.com') || rawUrl.includes('b23.tv')) {
         success = await handleBilibili(rawUrl);
       } else {
-        // デフォルトはTikTok処理
         success = await handleTikTok(rawUrl);
       }
 
