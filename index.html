@@ -107,7 +107,7 @@
   </div>
 
   <div class="version-box">
-    更新日時: 2026-09-03 14:35
+    更新日時: 2026-09-03 14:45
   </div>
 
   <script>
@@ -200,7 +200,7 @@
       const statusDiv = document.getElementById('status');
       const parsed = parseTikTokInfo(rawUrl);
 
-      // 1. TikWM API
+      // TikWM API
       try {
         const formData = new FormData();
         formData.append('url', rawUrl);
@@ -225,84 +225,80 @@
       }
 
       statusDiv.innerText = '予備サーバーで解析中...';
-      return await handleCobalt(rawUrl, 'tiktok', parsed.author, parsed.videoId);
+      return await handleBilibiliFallback(rawUrl, 'tiktok', parsed.author, parsed.videoId);
     }
 
     async function handleBilibili(rawUrl) {
       const parsed = parseBilibiliInfo(rawUrl);
-      return await handleCobalt(rawUrl, 'bilibili', 'bilibili_user', parsed.videoId);
+      return await handleBilibiliFallback(rawUrl, 'bilibili', 'bilibili_user', parsed.videoId);
     }
 
-    async function handleCobalt(rawUrl, platform, defaultAuthor, defaultVideoId) {
+    // CORS回避型のGETリクエストによる予備解析ロジック
+    async function handleBilibiliFallback(rawUrl, platform, defaultAuthor, defaultVideoId) {
       const statusDiv = document.getElementById('status');
       let cleanUrl = rawUrl;
       try { const uObj = new URL(rawUrl); cleanUrl = uObj.origin + uObj.pathname; } catch (e) {}
 
-      const endpoints = [
-        'https://api.cobalt.tools/api/json',
-        'https://co.wuk.sh/api/json',
-        'https://cobalt.api.scouts.cc/api/json'
+      // CORSフレンドリーな公開プロキシサービス経由で解析
+      const proxyApis = [
+        `https://corsproxy.io/?${encodeURIComponent('https://api.cobalt.tools/api/json')}`,
+        `https://api.allorigins.win/raw?url=${encodeURIComponent('https://api.cobalt.tools/api/json')}`
       ];
 
-      const payload = { url: cleanUrl, videoQuality: 'max' };
-
-      for (const endpoint of endpoints) {
-        // 通常のリクエスト試行
+      for (const apiEndpoint of proxyApis) {
         try {
-          const response = await fetch(endpoint, {
+          const response = await fetch(apiEndpoint, {
             method: 'POST',
-            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            headers: { 
+              'Accept': 'application/json', 
+              'Content-Type': 'application/json' 
+            },
+            body: JSON.stringify({ url: cleanUrl, videoQuality: 'max' })
           });
 
           if (response.ok) {
             const data = await response.json();
-            if (await processCobaltResult(data, platform, defaultAuthor, defaultVideoId)) return true;
+            let targetUrl = '';
+            if (data.status === 'stream' || data.status === 'redirect' || data.status === 'tunnel') { targetUrl = data.url; }
+            else if (data.status === 'picker' && data.picker?.length > 0) { targetUrl = data.picker[0].url; }
+
+            if (targetUrl) {
+              const author = defaultAuthor || 'user';
+              const videoId = defaultVideoId || Date.now();
+              const siteName = platform === 'bilibili' ? 'Bilibili' : 'TikTok';
+              const fileName = `${author}(${videoId}) - ${siteName}.mp4`;
+              
+              if (platform === 'tiktok') showUserLink('tiktok', author);
+              await triggerDirectDownload(targetUrl, fileName);
+              return true;
+            } else {
+              lastErrorMessage += ` | [Status: ${data.status}] ${data.text || data.code || ''}`;
+            }
           } else {
-            lastErrorMessage += ` | [${endpoint} HTTP ${response.status}]`;
+            lastErrorMessage += ` | [HTTP ${response.status}]`;
           }
         } catch (err) {
-          lastErrorMessage += ` | Direct fetch fail: ${endpoint}`;
+          lastErrorMessage += ` | Proxy Err: ${err.message}`;
         }
+      }
 
-        // CORS回避プロキシ経由での再試行
+      // 最終フォールバック: Bilibili用のサードパーティ公開解析サービス
+      if (platform === 'bilibili') {
         try {
-          const proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(endpoint);
-          const response = await fetch(proxyUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-          });
-
-          if (response.ok) {
-            const data = await response.json();
-            if (await processCobaltResult(data, platform, defaultAuthor, defaultVideoId)) return true;
+          const bApi = `https://api.bilibili.com/x/web-interface/view?bvid=${defaultVideoId}`;
+          const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(bApi)}`);
+          if (res.ok) {
+            const wrapper = await res.json();
+            const bData = JSON.parse(wrapper.contents);
+            if (bData.code === 0 && bData.data) {
+              const mid = bData.data.owner?.mid;
+              if (mid) showUserLink('bilibili', mid);
+            }
           }
-        } catch (proxyErr) {
-          lastErrorMessage += ` | Proxy fetch fail: ${endpoint}`;
-        }
+        } catch(e) {}
       }
+
       return false;
-    }
-
-    async function processCobaltResult(data, platform, defaultAuthor, defaultVideoId) {
-      let targetUrl = '';
-      if (data.status === 'stream' || data.status === 'redirect' || data.status === 'tunnel') { targetUrl = data.url; }
-      else if (data.status === 'picker' && data.picker?.length > 0) { targetUrl = data.picker[0].url; }
-
-      if (targetUrl) {
-        const author = defaultAuthor || 'user';
-        const videoId = defaultVideoId || Date.now();
-        const siteName = platform === 'bilibili' ? 'Bilibili' : 'TikTok';
-        const fileName = `${author}(${videoId}) - ${siteName}.mp4`;
-        
-        if (platform === 'tiktok') showUserLink('tiktok', author);
-        await triggerDirectDownload(targetUrl, fileName);
-        return true;
-      } else {
-        lastErrorMessage += ` | [Cobalt Status: ${data.status}] ${data.text || data.code || ''}`;
-        return false;
-      }
     }
 
     async function downloadVideo() {
