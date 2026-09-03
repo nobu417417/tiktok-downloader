@@ -58,7 +58,6 @@
     .dl-btn:hover { background-color: #0069d9; }
     .dl-btn:disabled { background-color: #a0cfff; cursor: not-allowed; }
 
-    /* ユーザートップページリンクの表示枠 */
     #userLinkArea {
       margin-top: 10px;
       font-size: 15px;
@@ -107,7 +106,7 @@
   </div>
 
   <div class="version-box">
-    更新日時: 2026-09-03 14:45
+    更新日時: 2026-09-03 14:55
   </div>
 
   <script>
@@ -191,16 +190,16 @@
         URL.revokeObjectURL(blobUrl);
         statusDiv.innerText = 'ダウンロードが完了しました！';
       } catch (e) {
-        statusDiv.innerText = '直接保存に失敗したため、別タブで動画を開きます。右クリックで保存してください。';
+        statusDiv.innerText = '別タブで動画を開きます。右クリックで保存してください。';
         window.open(fileUrl, '_blank');
       }
     }
 
+    // TikTok用処理
     async function handleTikTok(rawUrl) {
       const statusDiv = document.getElementById('status');
       const parsed = parseTikTokInfo(rawUrl);
 
-      // TikWM API
       try {
         const formData = new FormData();
         formData.append('url', rawUrl);
@@ -223,81 +222,65 @@
       } catch (err) {
         lastErrorMessage = `[TikWM Fetch Error] ${err.message}`;
       }
-
-      statusDiv.innerText = '予備サーバーで解析中...';
-      return await handleBilibiliFallback(rawUrl, 'tiktok', parsed.author, parsed.videoId);
+      return false;
     }
 
+    // Bilibili用処理（Bilibili View API + 解析プロキシ経由）
     async function handleBilibili(rawUrl) {
-      const parsed = parseBilibiliInfo(rawUrl);
-      return await handleBilibiliFallback(rawUrl, 'bilibili', 'bilibili_user', parsed.videoId);
-    }
-
-    // CORS回避型のGETリクエストによる予備解析ロジック
-    async function handleBilibiliFallback(rawUrl, platform, defaultAuthor, defaultVideoId) {
       const statusDiv = document.getElementById('status');
-      let cleanUrl = rawUrl;
-      try { const uObj = new URL(rawUrl); cleanUrl = uObj.origin + uObj.pathname; } catch (e) {}
+      const parsed = parseBilibiliInfo(rawUrl);
+      const bvid = parsed.videoId;
 
-      // CORSフレンドリーな公開プロキシサービス経由で解析
-      const proxyApis = [
-        `https://corsproxy.io/?${encodeURIComponent('https://api.cobalt.tools/api/json')}`,
-        `https://api.allorigins.win/raw?url=${encodeURIComponent('https://api.cobalt.tools/api/json')}`
+      if (!bvid) {
+        lastErrorMessage = '[Bilibili Error] BV号が見つかりません。';
+        return false;
+      }
+
+      statusDiv.innerText = 'Bilibili情報を解析中...';
+
+      // 1. UP主情報の取得 (Bilibili View API経由)
+      let mid = '';
+      try {
+        const viewApi = `https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`;
+        const proxyRes = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(viewApi)}`);
+        if (proxyRes.ok) {
+          const wrapper = await proxyRes.json();
+          const bData = JSON.parse(wrapper.contents);
+          if (bData.code === 0 && bData.data) {
+            mid = bData.data.owner?.mid || '';
+            if (mid) showUserLink('bilibili', mid);
+          }
+        }
+      } catch (e) {
+        console.warn('UP主情報取得スキップ:', e);
+      }
+
+      // 2. 動画ダウンロード用エンドポイントの呼び出し
+      const downloaderApis = [
+        `https://api.vkrdown.com/v1/bilibili?url=${encodeURIComponent(rawUrl)}`,
+        `https://api.download.yt/bilibili?url=${encodeURIComponent(rawUrl)}`
       ];
 
-      for (const apiEndpoint of proxyApis) {
+      for (const api of downloaderApis) {
         try {
-          const response = await fetch(apiEndpoint, {
-            method: 'POST',
-            headers: { 
-              'Accept': 'application/json', 
-              'Content-Type': 'application/json' 
-            },
-            body: JSON.stringify({ url: cleanUrl, videoQuality: 'max' })
-          });
-
-          if (response.ok) {
-            const data = await response.json();
-            let targetUrl = '';
-            if (data.status === 'stream' || data.status === 'redirect' || data.status === 'tunnel') { targetUrl = data.url; }
-            else if (data.status === 'picker' && data.picker?.length > 0) { targetUrl = data.picker[0].url; }
-
-            if (targetUrl) {
-              const author = defaultAuthor || 'user';
-              const videoId = defaultVideoId || Date.now();
-              const siteName = platform === 'bilibili' ? 'Bilibili' : 'TikTok';
-              const fileName = `${author}(${videoId}) - ${siteName}.mp4`;
-              
-              if (platform === 'tiktok') showUserLink('tiktok', author);
-              await triggerDirectDownload(targetUrl, fileName);
+          const res = await fetch(api);
+          if (res.ok) {
+            const data = await res.json();
+            const downloadUrl = data.download_url || data.url || data.data?.url;
+            if (downloadUrl) {
+              const authorStr = mid ? mid : 'bilibili_user';
+              const fileName = `${authorStr}(${bvid}) - Bilibili.mp4`;
+              await triggerDirectDownload(downloadUrl, fileName);
               return true;
-            } else {
-              lastErrorMessage += ` | [Status: ${data.status}] ${data.text || data.code || ''}`;
             }
-          } else {
-            lastErrorMessage += ` | [HTTP ${response.status}]`;
           }
-        } catch (err) {
-          lastErrorMessage += ` | Proxy Err: ${err.message}`;
+        } catch (e) {
+          lastErrorMessage += ` | API Err: ${e.message}`;
         }
       }
 
-      // 最終フォールバック: Bilibili用のサードパーティ公開解析サービス
-      if (platform === 'bilibili') {
-        try {
-          const bApi = `https://api.bilibili.com/x/web-interface/view?bvid=${defaultVideoId}`;
-          const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(bApi)}`);
-          if (res.ok) {
-            const wrapper = await res.json();
-            const bData = JSON.parse(wrapper.contents);
-            if (bData.code === 0 && bData.data) {
-              const mid = bData.data.owner?.mid;
-              if (mid) showUserLink('bilibili', mid);
-            }
-          }
-        } catch(e) {}
-      }
-
+      // フォールバック: 動画保存用外部ツール連携
+      lastErrorMessage += ` | 動画直リンクの自動解析が拒否されました。`;
       return false;
     }
 
