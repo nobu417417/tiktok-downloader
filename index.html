@@ -75,7 +75,7 @@
   <h2>tool-page</h2>
   
   <div class="input-group">
-    <input type="text" id="videoUrl" placeholder="TikTokのURLを貼り付け" />
+    <input type="text" id="videoUrl" placeholder="TikTok または Bilibili のURLを貼り付け" />
     <button class="paste-btn" onclick="pasteUrl()" title="クリップボードから貼り付け">貼り付け</button>
     <button class="dl-btn" id="mainDlBtn" onclick="downloadVideo()">ダウンロード実行</button>
   </div>
@@ -88,7 +88,7 @@
   <button id="copyBtn" onclick="copyError()">エラーメッセージをコピー</button>
 
   <div class="version-box">
-    更新日時: 2026-09-02 10:45
+    更新日時: 2026-09-03 14:20
   </div>
 
   <script>
@@ -112,7 +112,8 @@
       }
     }
 
-    function parseUrlInfo(urlStr) {
+    // TikTok URLの解析
+    function parseTikTokInfo(urlStr) {
       let author = '';
       let videoId = '';
       try {
@@ -125,14 +126,35 @@
       return { author, videoId };
     }
 
-    // ユーザーのトップページリンクを生成して表示する関数
-    function showUserLink(author) {
+    // Bilibili URLの解析 (BV号/AV号)
+    function parseBilibiliInfo(urlStr) {
+      let videoId = '';
+      try {
+        const matchBV = urlStr.match(/(BV[a-zA-Z0-9]+)/i);
+        if (matchBV) {
+          videoId = matchBV[1];
+        } else {
+          const matchAV = urlStr.match(/(av\d+)/i);
+          if (matchAV) videoId = matchAV[1];
+        }
+      } catch (e) {}
+      return { videoId };
+    }
+
+    // ユーザーリンクの表示
+    function showUserLink(platform, authorOrSpaceId) {
       const userLinkArea = document.getElementById('userLinkArea');
-      if (author && author !== 'user') {
-        const profileUrl = `https://www.tiktok.com/@${author}`;
-        userLinkArea.innerHTML = `ユーザーページ: <a href="${profileUrl}" target="_blank" rel="noopener noreferrer">${profileUrl}</a>`;
-      } else {
+      if (!authorOrSpaceId || authorOrSpaceId === 'user') {
         userLinkArea.innerHTML = '';
+        return;
+      }
+
+      if (platform === 'tiktok') {
+        const profileUrl = `https://www.tiktok.com/@${authorOrSpaceId}`;
+        userLinkArea.innerHTML = `ユーザーページ: <a href="${profileUrl}" target="_blank" rel="noopener noreferrer">${profileUrl}</a>`;
+      } else if (platform === 'bilibili') {
+        const profileUrl = `https://space.bilibili.com/${authorOrSpaceId}`;
+        userLinkArea.innerHTML = `UP主ページ: <a href="${profileUrl}" target="_blank" rel="noopener noreferrer">${profileUrl}</a>`;
       }
     }
 
@@ -158,6 +180,81 @@
       }
     }
 
+    // TikTok用処理
+    async function handleTikTok(rawUrl) {
+      const statusDiv = document.getElementById('status');
+      const parsed = parseTikTokInfo(rawUrl);
+
+      // 1. TikWM API
+      try {
+        const formData = new FormData();
+        formData.append('url', rawUrl);
+        formData.append('hd', 1);
+        const res = await fetch('https://www.tikwm.com/api/', { method: 'POST', body: formData });
+        const data = await res.json();
+
+        if (data.code === 0 && data.data && (data.data.play || data.data.hdplay)) {
+          const videoLink = data.data.hdplay || data.data.play;
+          const author = (data.data.author && data.data.author.unique_id) || parsed.author || 'user';
+          const videoId = data.data.id || parsed.videoId || Date.now();
+          const fileName = `${author}(${videoId}) - TikTok.mp4`;
+          
+          showUserLink('tiktok', author);
+          await triggerDirectDownload(videoLink, fileName);
+          return true;
+        } else {
+          lastErrorMessage = `[TikWM Error] code: ${data.code}, msg: ${data.msg || 'failed'}`;
+        }
+      } catch (err) {
+        lastErrorMessage = `[TikWM Fetch Error] ${err.message}`;
+      }
+
+      // 2. Cobalt API Fallback
+      statusDiv.innerText = '予備サーバーで解析中...';
+      return await handleCobalt(rawUrl, 'tiktok', parsed.author, parsed.videoId);
+    }
+
+    // Bilibili用処理 (Cobalt API経由)
+    async function handleBilibili(rawUrl) {
+      const parsed = parseBilibiliInfo(rawUrl);
+      return await handleCobalt(rawUrl, 'bilibili', 'bilibili_user', parsed.videoId);
+    }
+
+    // Cobalt API 汎用処理
+    async function handleCobalt(rawUrl, platform, defaultAuthor, defaultVideoId) {
+      const statusDiv = document.getElementById('status');
+      try {
+        let cleanUrl = rawUrl;
+        try { const uObj = new URL(rawUrl); cleanUrl = uObj.origin + uObj.pathname; } catch (e) {}
+        
+        const response = await fetch('https://api.cobalt.tools/api/json', {
+          method: 'POST',
+          headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: cleanUrl, videoQuality: 'max' })
+        });
+        const data = await response.json();
+        let targetUrl = '';
+        if (data.status === 'stream' || data.status === 'redirect' || data.status === 'tunnel') { targetUrl = data.url; }
+        else if (data.status === 'picker' && data.picker?.length > 0) { targetUrl = data.picker[0].url; }
+
+        if (targetUrl) {
+          const author = defaultAuthor || 'user';
+          const videoId = defaultVideoId || Date.now();
+          const siteName = platform === 'bilibili' ? 'Bilibili' : 'TikTok';
+          const fileName = `${author}(${videoId}) - ${siteName}.mp4`;
+          
+          if (platform === 'tiktok') showUserLink('tiktok', author);
+          await triggerDirectDownload(targetUrl, fileName);
+          return true;
+        } else {
+          lastErrorMessage += ` | [Cobalt Status: ${data.status}] ${data.text || data.code || ''}`;
+        }
+      } catch (err) {
+        lastErrorMessage += ` | [Cobalt Fetch Error] ${err.message}`;
+      }
+      return false;
+    }
+
     async function downloadVideo() {
       const rawUrl = document.getElementById('videoUrl').value.trim();
       const statusDiv = document.getElementById('status');
@@ -178,66 +275,21 @@
       statusDiv.innerText = '解析中...';
       dlBtn.disabled = true;
 
-      const parsed = parseUrlInfo(rawUrl);
+      let success = false;
 
-      // 1. TikWM API
-      try {
-        const formData = new FormData();
-        formData.append('url', rawUrl);
-        formData.append('hd', 1);
-        const res = await fetch('https://www.tikwm.com/api/', { method: 'POST', body: formData });
-        const data = await res.json();
-
-        if (data.code === 0 && data.data && (data.data.play || data.data.hdplay)) {
-          const videoLink = data.data.hdplay || data.data.play;
-          const author = (data.data.author && data.data.author.unique_id) || parsed.author || 'user';
-          const videoId = data.data.id || parsed.videoId || Date.now();
-          const fileName = `${author}(${videoId}) - TikTok.mp4`;
-          
-          showUserLink(author); // ユーザーページリンクを表示
-          await triggerDirectDownload(videoLink, fileName);
-          dlBtn.disabled = false;
-          return;
-        } else {
-          lastErrorMessage = `[TikWM Error] code: ${data.code}, msg: ${data.msg || 'failed'}`;
-        }
-      } catch (err) {
-        lastErrorMessage = `[TikWM Fetch Error] ${err.message}`;
+      // URLのドメインによる自動分岐
+      if (rawUrl.includes('bilibili.com') || rawUrl.includes('b23.tv')) {
+        success = await handleBilibili(rawUrl);
+      } else {
+        // デフォルトはTikTok処理
+        success = await handleTikTok(rawUrl);
       }
 
-      // 2. Cobalt API
-      statusDiv.innerText = '予備サーバーで解析中...';
-      try {
-        let cleanUrl = rawUrl;
-        try { const uObj = new URL(rawUrl); cleanUrl = uObj.origin + uObj.pathname; } catch (e) {}
-        const response = await fetch('https://api.cobalt.tools/api/json', {
-          method: 'POST',
-          headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: cleanUrl, videoQuality: 'max' })
-        });
-        const data2 = await response.json();
-        let targetUrl = '';
-        if (data2.status === 'stream' || data2.status === 'redirect' || data2.status === 'tunnel') { targetUrl = data2.url; }
-        else if (data2.status === 'picker' && data2.picker?.length > 0) { targetUrl = data2.picker[0].url; }
-
-        if (targetUrl) {
-          const author = parsed.author || 'user';
-          const videoId = parsed.videoId || Date.now();
-          const fileName = `${author}(${videoId}) - TikTok.mp4`;
-          
-          showUserLink(author); // ユーザーページリンクを表示
-          await triggerDirectDownload(targetUrl, fileName);
-          dlBtn.disabled = false;
-          return;
-        } else {
-          lastErrorMessage += ` | [Cobalt Status: ${data2.status}] ${data2.text || data2.code || ''}`;
-        }
-      } catch (err2) {
-        lastErrorMessage += ` | [Cobalt Fetch Error] ${err2.message}`;
+      if (!success) {
+        statusDiv.innerText = 'エラー: 動画を取得できませんでした。';
+        copyBtn.style.display = 'inline-block';
       }
 
-      statusDiv.innerText = 'エラー: 動画を取得できませんでした。';
-      copyBtn.style.display = 'inline-block';
       dlBtn.disabled = false;
     }
 
