@@ -2,7 +2,6 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <!-- 検索エンジンにインデックスされないように設定 -->
   <meta name="robots" content="noindex, nofollow">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>tool-page</title>
@@ -71,8 +70,23 @@
 
     #status { margin-top: 20px; font-weight: bold; word-break: break-all; min-height: 1.2em; }
     
+    .fallback-box {
+      margin-top: 15px;
+      padding: 12px;
+      background-color: #fff3cd;
+      border: 1px solid #ffeeba;
+      border-radius: 6px;
+      color: #856404;
+      font-size: 14px;
+      display: none;
+    }
+    .fallback-box a {
+      color: #0056b3;
+      font-weight: bold;
+    }
+
     .copy-area {
-      margin-top: 10px;
+      margin-top: 15px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -95,18 +109,22 @@
     <button class="dl-btn" id="mainDlBtn" onclick="downloadVideo()">実行</button>
   </div>
 
-  <!-- ユーザーのトップページリンク表示場所 -->
+  <!-- UP主等のリンク表示エリア -->
   <div id="userLinkArea"></div>
 
+  <!-- ステータス表示エリア -->
   <div id="status"></div>
+
+  <!-- 取得失敗時の代替案内エリア -->
+  <div id="fallbackArea" class="fallback-box"></div>
   
   <div class="copy-area">
-    <button id="copyBtn" onclick="copyError()">エラーメッセージをコピー</button>
+    <button id="copyBtn" onclick="copyError()">エラー詳細をコピー</button>
     <span id="copyNotice"></span>
   </div>
 
   <div class="version-box">
-    更新日時: 2026-09-03 14:55
+    更新日時: 2026-09-03 15:10
   </div>
 
   <script>
@@ -126,7 +144,7 @@
         }
       } catch (err) {
         console.error('Failed to read clipboard: ', err);
-        statusDiv.innerText = '貼り付けに失敗しました。ブラウザのペースト許可を確認してください。';
+        statusDiv.innerText = '貼り付けに失敗しました。';
       }
     }
 
@@ -195,9 +213,8 @@
       }
     }
 
-    // TikTok用処理
+    // TikTok処理
     async function handleTikTok(rawUrl) {
-      const statusDiv = document.getElementById('status');
       const parsed = parseTikTokInfo(rawUrl);
 
       try {
@@ -225,9 +242,10 @@
       return false;
     }
 
-    // Bilibili用処理（Bilibili View API + 解析プロキシ経由）
+    // Bilibili処理
     async function handleBilibili(rawUrl) {
       const statusDiv = document.getElementById('status');
+      const fallbackArea = document.getElementById('fallbackArea');
       const parsed = parseBilibiliInfo(rawUrl);
       const bvid = parsed.videoId;
 
@@ -236,57 +254,41 @@
         return false;
       }
 
-      statusDiv.innerText = 'Bilibili情報を解析中...';
+      statusDiv.innerText = '解析中...';
 
-      // 1. UP主情報の取得 (Bilibili View API経由)
-      let mid = '';
+      // UP主ページの取得を試みる
       try {
         const viewApi = `https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`;
         const proxyRes = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(viewApi)}`);
         if (proxyRes.ok) {
           const wrapper = await proxyRes.json();
           const bData = JSON.parse(wrapper.contents);
-          if (bData.code === 0 && bData.data) {
-            mid = bData.data.owner?.mid || '';
-            if (mid) showUserLink('bilibili', mid);
+          if (bData.code === 0 && bData.data && bData.data.owner) {
+            showUserLink('bilibili', bData.data.owner.mid);
           }
         }
       } catch (e) {
         console.warn('UP主情報取得スキップ:', e);
       }
 
-      // 2. 動画ダウンロード用エンドポイントの呼び出し
-      const downloaderApis = [
-        `https://api.vkrdown.com/v1/bilibili?url=${encodeURIComponent(rawUrl)}`,
-        `https://api.download.yt/bilibili?url=${encodeURIComponent(rawUrl)}`
-      ];
+      // 自動解析は拒否されるため、フォールバック案内を表示
+      lastErrorMessage = 'Bilibiliの制限によりブラウザ単体での動画直リンク自動取得がブロックされました。';
+      
+      const targetBiliUrl = `https://www.bilibili.com/video/${bvid}`;
+      fallbackArea.style.display = 'block';
+      fallbackArea.innerHTML = `
+        <strong>【自動取得エラー】</strong><br>
+        Bilibili側のセキュリティ制限のため直リンクを取得できませんでした。<br>
+        <a href="${targetBiliUrl}" target="_blank" rel="noopener noreferrer">👉 Bilibili公式で動画を開く (${bvid})</a>
+      `;
 
-      for (const api of downloaderApis) {
-        try {
-          const res = await fetch(api);
-          if (res.ok) {
-            const data = await res.json();
-            const downloadUrl = data.download_url || data.url || data.data?.url;
-            if (downloadUrl) {
-              const authorStr = mid ? mid : 'bilibili_user';
-              const fileName = `${authorStr}(${bvid}) - Bilibili.mp4`;
-              await triggerDirectDownload(downloadUrl, fileName);
-              return true;
-            }
-          }
-        } catch (e) {
-          lastErrorMessage += ` | API Err: ${e.message}`;
-        }
-      }
-
-      // フォールバック: 動画保存用外部ツール連携
-      lastErrorMessage += ` | 動画直リンクの自動解析が拒否されました。`;
       return false;
     }
 
     async function downloadVideo() {
       const rawUrl = document.getElementById('videoUrl').value.trim();
       const statusDiv = document.getElementById('status');
+      const fallbackArea = document.getElementById('fallbackArea');
       const copyBtn = document.getElementById('copyBtn');
       const copyNotice = document.getElementById('copyNotice');
       const dlBtn = document.getElementById('mainDlBtn');
@@ -294,6 +296,8 @@
 
       statusDiv.innerText = '';
       userLinkArea.innerHTML = '';
+      fallbackArea.style.display = 'none';
+      fallbackArea.innerHTML = '';
       copyBtn.style.display = 'none';
       copyNotice.innerText = '';
       lastErrorMessage = '';
@@ -303,7 +307,6 @@
         return;
       }
 
-      statusDiv.innerText = '解析中...';
       dlBtn.disabled = true;
 
       let success = false;
@@ -311,11 +314,16 @@
       if (rawUrl.includes('bilibili.com') || rawUrl.includes('b23.tv')) {
         success = await handleBilibili(rawUrl);
       } else {
+        statusDiv.innerText = '解析中...';
         success = await handleTikTok(rawUrl);
       }
 
       if (!success) {
-        statusDiv.innerText = 'エラー: 動画を取得できませんでした。';
+        if (!rawUrl.includes('bilibili.com') && !rawUrl.includes('b23.tv')) {
+          statusDiv.innerText = 'エラー: 動画を取得できませんでした。';
+        } else {
+          statusDiv.innerText = '処理を完了しました。';
+        }
         copyBtn.style.display = 'inline-block';
       }
 
