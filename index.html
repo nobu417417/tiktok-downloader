@@ -8,8 +8,14 @@
   <title>tool-page</title>
   <style>
     body { font-family: sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; text-align: center; background-color: #f9f9f9; }
-    h2 { color: #333; }
+    h2 { color: #333; margin-bottom: 5px; }
     
+    .supported-sites {
+      font-size: 14px;
+      color: #666;
+      margin-bottom: 25px;
+    }
+
     .input-group {
       display: flex;
       gap: 10px;
@@ -65,7 +71,16 @@
     }
 
     #status { margin-top: 20px; font-weight: bold; word-break: break-all; min-height: 1.2em; }
-    #copyBtn { display: none; background-color: #f0f0f0; border: 1px solid #ccc; padding: 5px 12px; font-size: 14px; border-radius: 4px; color: #333;}
+    
+    .copy-area {
+      margin-top: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    #copyBtn { display: none; background-color: #f0f0f0; border: 1px solid #ccc; padding: 5px 12px; font-size: 14px; border-radius: 4px; color: #333; }
+    #copyNotice { font-size: 13px; color: #28a745; font-weight: bold; }
     
     .version-box { margin-top: 50px; padding-top: 15px; border-top: 1px solid #eee; font-size: 13px; color: #888; }
   </style>
@@ -73,22 +88,26 @@
 <body>
 
   <h2>tool-page</h2>
+  <div class="supported-sites">対応サイト: TikTok / Bilibili</div>
   
   <div class="input-group">
-    <input type="text" id="videoUrl" placeholder="TikTok または Bilibili のURLを貼り付け" />
+    <input type="text" id="videoUrl" placeholder="" />
     <button class="paste-btn" onclick="pasteUrl()" title="クリップボードから貼り付け">貼り付け</button>
-    <button class="dl-btn" id="mainDlBtn" onclick="downloadVideo()">ダウンロード実行</button>
+    <button class="dl-btn" id="mainDlBtn" onclick="downloadVideo()">実行</button>
   </div>
 
   <!-- ユーザーのトップページリンク表示場所 -->
   <div id="userLinkArea"></div>
 
   <div id="status"></div>
-  <br />
-  <button id="copyBtn" onclick="copyError()">エラーメッセージをコピー</button>
+  
+  <div class="copy-area">
+    <button id="copyBtn" onclick="copyError()">エラーメッセージをコピー</button>
+    <span id="copyNotice"></span>
+  </div>
 
   <div class="version-box">
-    更新日時: 2026-09-03 14:20
+    更新日時: 2026-09-03 14:30
   </div>
 
   <script>
@@ -214,43 +233,57 @@
       return await handleCobalt(rawUrl, 'tiktok', parsed.author, parsed.videoId);
     }
 
-    // Bilibili用処理 (Cobalt API経由)
+    // Bilibili用処理
     async function handleBilibili(rawUrl) {
       const parsed = parseBilibiliInfo(rawUrl);
       return await handleCobalt(rawUrl, 'bilibili', 'bilibili_user', parsed.videoId);
     }
 
-    // Cobalt API 汎用処理
+    // Cobalt API 汎用処理（複数エンドポイントのフォールバック付き）
     async function handleCobalt(rawUrl, platform, defaultAuthor, defaultVideoId) {
       const statusDiv = document.getElementById('status');
-      try {
-        let cleanUrl = rawUrl;
-        try { const uObj = new URL(rawUrl); cleanUrl = uObj.origin + uObj.pathname; } catch (e) {}
-        
-        const response = await fetch('https://api.cobalt.tools/api/json', {
-          method: 'POST',
-          headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: cleanUrl, videoQuality: 'max' })
-        });
-        const data = await response.json();
-        let targetUrl = '';
-        if (data.status === 'stream' || data.status === 'redirect' || data.status === 'tunnel') { targetUrl = data.url; }
-        else if (data.status === 'picker' && data.picker?.length > 0) { targetUrl = data.picker[0].url; }
+      let cleanUrl = rawUrl;
+      try { const uObj = new URL(rawUrl); cleanUrl = uObj.origin + uObj.pathname; } catch (e) {}
 
-        if (targetUrl) {
-          const author = defaultAuthor || 'user';
-          const videoId = defaultVideoId || Date.now();
-          const siteName = platform === 'bilibili' ? 'Bilibili' : 'TikTok';
-          const fileName = `${author}(${videoId}) - ${siteName}.mp4`;
-          
-          if (platform === 'tiktok') showUserLink('tiktok', author);
-          await triggerDirectDownload(targetUrl, fileName);
-          return true;
-        } else {
-          lastErrorMessage += ` | [Cobalt Status: ${data.status}] ${data.text || data.code || ''}`;
+      // 利用可能なCobalt APIエンドポイントのリスト
+      const endpoints = [
+        'https://api.cobalt.tools/api/json',
+        'https://co.wuk.sh/api/json'
+      ];
+
+      for (const endpoint of endpoints) {
+        try {
+          const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: cleanUrl, videoQuality: 'max' })
+          });
+
+          if (!response.ok) {
+            lastErrorMessage += ` | [${endpoint} HTTP ${response.status}]`;
+            continue;
+          }
+
+          const data = await response.json();
+          let targetUrl = '';
+          if (data.status === 'stream' || data.status === 'redirect' || data.status === 'tunnel') { targetUrl = data.url; }
+          else if (data.status === 'picker' && data.picker?.length > 0) { targetUrl = data.picker[0].url; }
+
+          if (targetUrl) {
+            const author = defaultAuthor || 'user';
+            const videoId = defaultVideoId || Date.now();
+            const siteName = platform === 'bilibili' ? 'Bilibili' : 'TikTok';
+            const fileName = `${author}(${videoId}) - ${siteName}.mp4`;
+            
+            if (platform === 'tiktok') showUserLink('tiktok', author);
+            await triggerDirectDownload(targetUrl, fileName);
+            return true;
+          } else {
+            lastErrorMessage += ` | [Cobalt Status: ${data.status}] ${data.text || data.code || ''}`;
+          }
+        } catch (err) {
+          lastErrorMessage += ` | [Fetch Error ${endpoint}]: ${err.message}`;
         }
-      } catch (err) {
-        lastErrorMessage += ` | [Cobalt Fetch Error] ${err.message}`;
       }
       return false;
     }
@@ -259,12 +292,14 @@
       const rawUrl = document.getElementById('videoUrl').value.trim();
       const statusDiv = document.getElementById('status');
       const copyBtn = document.getElementById('copyBtn');
+      const copyNotice = document.getElementById('copyNotice');
       const dlBtn = document.getElementById('mainDlBtn');
       const userLinkArea = document.getElementById('userLinkArea');
 
       statusDiv.innerText = '';
       userLinkArea.innerHTML = '';
       copyBtn.style.display = 'none';
+      copyNotice.innerText = '';
       lastErrorMessage = '';
 
       if (!rawUrl) {
@@ -295,7 +330,14 @@
 
     function copyError() {
       if (!lastErrorMessage) return;
-      navigator.clipboard.writeText(lastErrorMessage).then(() => alert('コピーしました。')).catch(() => alert('失敗:\n' + lastErrorMessage));
+      const copyNotice = document.getElementById('copyNotice');
+      navigator.clipboard.writeText(lastErrorMessage).then(() => {
+        copyNotice.innerText = 'コピーしました！';
+        setTimeout(() => { copyNotice.innerText = ''; }, 2000);
+      }).catch(() => {
+        copyNotice.innerText = 'コピー失敗';
+        setTimeout(() => { copyNotice.innerText = ''; }, 2000);
+      });
     }
   </script>
 </body>
